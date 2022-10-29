@@ -1,148 +1,237 @@
 
 
-import math
-import time
 import numpy as np
 
-# Pytorch packages
 import torch
-import torch.optim as optim
-import torch.nn as nn
-# Torchtest packages
-from torchtext.datasets import Multi30k, WMT14
-from torchtext.data import Field, BucketIterator
+from torch import nn
+import random
 
-from models.seq2seq.Decoder import Decoder
-from models.seq2seq.Encoder import Encoder
-from models.seq2seq.Seq2Seq import Seq2Seq
-from models.Transformer import TransformerTranslator
+####### Do not modify these imports.
 
-# Tqdm progress bar
-from tqdm import tqdm_notebook
+class TransformerTranslator(nn.Module):
+    """
+    A single-layer Transformer which encodes a sequence of text and 
+    performs binary classification.
 
-# Check device availability
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print("You are using device: %s" % device)
-# Hyperparameters
-BATCH_SIZE = 128
-MAX_LEN = 64
-# Define the source and target language
-SRC = Field(tokenize="spacy",
-            tokenizer_language="de",
-            init_token='<sos>',
-            eos_token='<eos>',
-            fix_length=MAX_LEN,
-            lower=True)
+    The model has a vocab size of V, works on
+    sequences of length T, has an hidden dimension of H, uses word vectors
+    also of dimension H, and operates on minibatches of size N.
+    """
+    def __init__(self, input_size, output_size, device, hidden_dim=128, num_heads=2, dim_feedforward=2048, dim_k=96, dim_v=96, dim_q=96, max_length=43):
+        """
+        :param input_size: the size of the input, which equals to the number of words in source language vocabulary
+        :param output_size: the size of the output, which equals to the number of words in target language vocabulary
+        :param hidden_dim: the dimensionality of the output embeddings that go into the final layer
+        :param num_heads: the number of Transformer heads to use
+        :param dim_feedforward: the dimension of the feedforward network model
+        :param dim_k: the dimensionality of the key vectors
+        :param dim_q: the dimensionality of the query vectors
+        :param dim_v: the dimensionality of the value vectors
+        """
+        super(TransformerTranslator, self).__init__()
+        assert hidden_dim % num_heads == 0
+        
+        self.num_heads = num_heads
+        self.word_embedding_dim = hidden_dim
+        self.hidden_dim = hidden_dim
+        self.dim_feedforward = dim_feedforward
+        self.max_length = max_length
+        self.input_size = input_size
+        self.output_size = output_size
+        self.device = device
+        self.dim_k = dim_k
+        self.dim_v = dim_v
+        self.dim_q = dim_q
+        
+        seed_torch(0)
+        
+        ##############################################################################
+        # TODO:
+        # Deliverable 1: Initialize what you need for the embedding lookup.          #
+        # You will need to use the max_length parameter above.                       #
+        # This should take 1-2 lines.                                                #
+        # Initialize the word embeddings before the positional encodings.            #
+        # Don’t worry about sine/cosine encodings- use positional encodings.         #
+        ##############################################################################
+        self.embedding_layer = nn.Embedding(self.input_size, self.word_embedding_dim)
+        self.positional_encoder = nn.Embedding(self.max_length, self.word_embedding_dim)
+        
+        ##############################################################################
+        #                               END OF YOUR CODE                             #
+        ##############################################################################
+        
+        
+        ##############################################################################
+        # Deliverable 2: Initializations for multi-head self-attention.              #
+        # You don't need to do anything here. Do not modify this code.               #
+        ##############################################################################
+        
+        # Head #1
+        self.k1 = nn.Linear(self.hidden_dim, self.dim_k)
+        self.v1 = nn.Linear(self.hidden_dim, self.dim_v)
+        self.q1 = nn.Linear(self.hidden_dim, self.dim_q)
+        
+        # Head #2
+        self.k2 = nn.Linear(self.hidden_dim, self.dim_k)
+        self.v2 = nn.Linear(self.hidden_dim, self.dim_v)
+        self.q2 = nn.Linear(self.hidden_dim, self.dim_q)
+        
+        self.softmax = nn.Softmax(dim=2)
+        self.attention_head_projection = nn.Linear(self.dim_v * self.num_heads, self.hidden_dim)
+        self.norm_mh = nn.LayerNorm(self.hidden_dim)
 
-TRG = Field(tokenize="spacy",
-            tokenizer_language="en",
-            init_token='<sos>',
-            eos_token='<eos>',
-            fix_length=MAX_LEN,
-            lower=True)
+        
+        ##############################################################################
+        # TODO:
+        # Deliverable 3: Initialize what you need for the feed-forward layer.        # 
+        # Don't forget the layer normalization.                                      #
+        ##############################################################################
+        
+        ##############################################################################
+        #                               END OF YOUR CODE                             #
+        ##############################################################################
 
-# Download the data
-train_data, valid_data, test_data = Multi30k.splits(exts=('.de', '.en'),
-                                                    fields=(SRC, TRG))
-# train_data, valid_data, test_data = WMT14.splits(exts = ('.de', '.en'),
-#                                                     fields = (SRC, TRG))
+        
+        ##############################################################################
+        # TODO:
+        # Deliverable 4: Initialize what you need for the final layer (1-2 lines).   #
+        ##############################################################################
+        
+        ##############################################################################
+        #                               END OF YOUR CODE                             #
+        ##############################################################################
 
-# Build the vocabulary associated with each language
-SRC.build_vocab(train_data, min_freq=2)
-TRG.build_vocab(train_data, min_freq=2)
+        
+    def forward(self, inputs):
+        """
+        This function computes the full Transformer forward pass.
+        Put together all of the layers you've developed in the correct order.
 
-train_loader, valid_loader, test_loader = BucketIterator.splits(
-    (train_data, valid_data, test_data),
-    batch_size=BATCH_SIZE,
-    device=device)
+        :param inputs: a PyTorch tensor of shape (N,T). These are integer lookups.
 
-# Get the input and the output sizes
-input_size = len(SRC.vocab)
-output_size = len(TRG.vocab)
+        :returns: the model outputs. Should be scores of shape (N,T,output_size).
+        """
 
-# Hyperparameters
-learning_rate = 5
+        #############################################################################
+        # TODO:
+        # Deliverable 5: Implement the full Transformer stack for the forward pass. #
+        # You will need to use all of the methods you have previously defined above.#
+        # You should only be calling TransformerTranslator class methods here.      #
+        #############################################################################
+        outputs = None
+        
+        ##############################################################################
+        #                               END OF YOUR CODE                             #
+        ##############################################################################
+        return outputs
+        
+    def position_encoding(self, max_length, word_embedding_dim,):
+        position = torch.arange(max_length, dtype=torch.float, device=torch.device("cpu")).reshape(1, -1, 1)
+        dims = torch.arange(word_embedding_dim, dtype=torch.float, device=torch.device("cpu")).reshape(1, 1, -1)
+        phase = position / (1e4 ** (dims // word_embedding_dim))
 
-# Model
-model = TransformerTranslator(input_size, output_size, device, max_length=MAX_LEN).to(device)
+        encodings = torch.where(dims.long() % 2 == 0, torch.sin(phase), torch.cos(phase))
 
-# optimizer = optim.Adam(model.parameters(), lr = learning_rate)
-optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 1.0, gamma=0.95)
+        return encodings
+    
+    def embed(self, inputs):
+        """
+        :param inputs: intTensor of shape (N,T)
+        :returns embeddings: floatTensor of shape (N,T,H)
+        """
+        embeddings = None
+        #############################################################################
+        # TODO:
+        # Deliverable 1: Implement the embedding lookup.                            #
+        # Note: word_to_ix has keys from 0 to self.vocab_size - 1                   #
+        # This will take a few lines.                                               #
+        #############################################################################
+        
+        # Loading word_to_ix.csv file
+        df = pd.read_csv('../codes_P4/data/word_to_ix.csv', header=None)
+        df.columns = ['word', 'index']
+        df.set_index("word", inplace = True)
 
-# Ignore padding index when calculating cross entropy
-PAD_IDX = TRG.vocab.stoi['<pad>']
-criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
+        # Creating word to index dict
+        df = df.to_dict('index')
+        word2ix = {word: ind['index'] for word, ind in df.items()} 
 
+        # Implementing Embedding Layer
+        embed_layer = nn.Embedding(inputs.shape[0], inputs.shape[1])
+        embeddings = embed_layer(inputs)
+      
+        ##############################################################################
+        #                               END OF YOUR CODE                             #
+        ##############################################################################
+        return embeddings
+        
+    def multi_head_attention(self, inputs):
+        """
+        :param inputs: float32 Tensor of shape (N,T,H)
+        :returns outputs: float32 Tensor of shape (N,T,H)
+        
+        Traditionally we'd include a padding mask here, so that pads are ignored.
+        This is a simplified implementation.
+        """
+        
+        
+        #############################################################################
+        # TODO:
+        # Deliverable 2: Implement multi-head self-attention followed by add + norm.#
+        # Use the provided 'Deliverable 2' layers initialized in the constructor.   #
+        #############################################################################
+        outputs = None
+        
+        ##############################################################################
+        #                               END OF YOUR CODE                             #
+        ##############################################################################
+        return outputs
+    
+    
+    def feedforward_layer(self, inputs):
+        """
+        :param inputs: float32 Tensor of shape (N,T,H)
+        :returns outputs: float32 Tensor of shape (N,T,H)
+        """
+        
+        #############################################################################
+        # TODO:
+        # Deliverable 3: Implement the feedforward layer followed by add + norm.    #
+        # Use a ReLU activation and apply the linear layers in the order you        #
+        # initialized them.                                                         #
+        # This should not take more than 3-5 lines of code.                         #
+        #############################################################################
+        outputs = None
+        
+        ##############################################################################
+        #                               END OF YOUR CODE                             #
+        ##############################################################################
+        return outputs
+        
+    
+    def final_layer(self, inputs):
+        """
+        :param inputs: float32 Tensor of shape (N,T,H)
+        :returns outputs: float32 Tensor of shape (N,T,V)
+        """
+        
+        #############################################################################
+        # TODO:
+        # Deliverable 4: Implement the final layer for the Transformer Translator.  #
+        # This should only take about 1 line of code.                               #
+        #############################################################################
+        outputs = None
+                
+        ##############################################################################
+        #                               END OF YOUR CODE                             #
+        ##############################################################################
+        return outputs
+        
 
-def train(model, dataloader, optimizer, criterion, scheduler=None):
-    model.train()
-
-    # Record total loss
-    total_loss = 0.
-
-    # Get the progress bar for later modification
-    progress_bar = tqdm_notebook(dataloader, ascii=True)
-
-    # Mini-batch training
-    for batch_idx, data in enumerate(progress_bar):
-        source = data.src.transpose(1, 0)
-        target = data.trg.transpose(1, 0)
-
-        translation = model(source)
-        translation = translation.reshape(-1, translation.shape[-1])
-        target = target.reshape(-1)
-
-        optimizer.zero_grad()
-        loss = criterion(translation, target)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
-        optimizer.step()
-
-        total_loss += loss.item()
-        progress_bar.set_description_str("Batch: %d, Loss: %.4f" % ((batch_idx + 1), loss.item()))
-
-    return total_loss, total_loss / len(dataloader)
-
-
-def evaluate(model, dataloader, criterion):
-    # Set the model to eval mode to avoid weights update
-    model.eval()
-    total_loss = 0.
-    with torch.no_grad():
-        # Get the progress bar 
-        progress_bar = tqdm_notebook(dataloader, ascii=True)
-        for batch_idx, data in enumerate(progress_bar):
-            source = data.src.transpose(1, 0)
-            target = data.trg.transpose(1, 0)
-
-            translation = model(source)
-            # translation = translation[:,1:].reshape(-1, translation.shape[-1])
-            # target = target[1:].view(-1)
-            translation = translation.reshape(-1, translation.shape[-1])
-            target = target.reshape(-1)
-
-            loss = criterion(translation, target)
-            total_loss += loss.item()
-            progress_bar.set_description_str("Batch: %d, Loss: %.4f" % ((batch_idx + 1), loss.item()))
-
-    avg_loss = total_loss / len(dataloader)
-    return total_loss, avg_loss
-    # print("Validation Loss: %.4f. Average Loss: %.4f. Perplexity" % (total_loss, avg_loss))
-
-
-EPOCHS = 50
-for epoch_idx in range(EPOCHS):
-    print("-----------------------------------")
-    print("Epoch %d" % (epoch_idx + 1))
-    print("-----------------------------------")
-
-    train_loss, avg_train_loss = train(model, train_loader, optimizer, criterion)
-    scheduler.step(train_loss)
-
-    val_loss, avg_val_loss = evaluate(model, valid_loader, criterion)
-
-    avg_train_loss = avg_train_loss.item()
-    avg_val_loss = avg_val_loss.item()
-    print("Training Loss: %.4f. Validation Loss: %.4f. " % (avg_train_loss, avg_val_loss))
-    print("Training Perplexity: %.4f. Validation Perplexity: %.4f. " % (np.exp(avg_train_loss), np.exp(avg_val_loss)))
+def seed_torch(seed=0):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
